@@ -1,9 +1,3 @@
-Code zum Copy-Pasten, inklusive QR-Anzeige im Terminal mit qrcode-terminal:
-
-✅ index.js (Copy & Paste)
-js
-Kopieren
-Bearbeiten
 import makeWASocket, {
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
