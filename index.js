@@ -1,91 +1,67 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const fs = require('fs');
+const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
+const { Boom } = require("@hapi/boom");
+const { useSingleFileAuthState } = require("@whiskeysockets/baileys");
 
-const client = new Client({
-    authStrategy: new LocalAuth()
-});
+async function startBot() {
+  const { state, saveState } = await useSingleFileAuthState("./auth_info_doublechecker.json");
+  const { version } = await fetchLatestBaileysVersion();
 
-let warnedUsers = {};
-const badWords = ['idiot', 'fuck', 'bastard']; // „hurensohn“ entfernt für Plattform-Kompatibilität
-const groupLinkRegex = /chat\.whatsapp\.com\/[A-Za-z0-9]+/;
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    printQRInTerminal: true,
+    browser: ['DoubleCheckerWA', 'Chrome', '1.0'],
+    getMessage: async () => undefined, // verhindert das Puffern von Nachrichten
+    markOnlineOnConnect: false,       // verhindert Status-Nachrichten
+    generateHighQualityLinkPreview: false,
+    syncFullHistory: false,           // deaktiviert Historie
+    msgRetryCounterCache: {},         // RAM-neutral
+    patchMessageBeforeSending: (msg) => msg,
+  });
 
-client.on('qr', qr => {
-    qrcode.generate(qr, { small: true });
-});
+  sock.ev.on("creds.update", saveState);
 
-client.on('ready', () => {
-    console.log('✅ DoubleCheckerWA ist aktiv!');
-});
-
-// GRUPPENMODERATION
-client.on('message_create', async msg => {
-    if (!msg.fromMe && msg.type === 'chat') {
-        const chat = await msg.getChat();
-        if (!chat.isGroup) return;
-
-        const user = msg.author || msg.from;
-        const content = msg.body.toLowerCase();
-        const mentions = [await msg.getContact()];
-
-        // Fremdwerbung
-        if (groupLinkRegex.test(content)) {
-            await msg.delete(true);
-            await chat.removeParticipants([user]);
-            await chat.sendMessage(`🚫 @${user.split('@')[0]} wurde wegen Fremdwerbung entfernt.`, { mentions });
-            return;
-        }
-
-        // Doppelte Nachricht
-        const messages = await chat.fetchMessages({ limit: 5 });
-        const same = messages.filter(m => m.body === msg.body && m.from === msg.from);
-        if (same.length > 1) {
-            if (!warnedUsers[user]) {
-                warnedUsers[user] = true;
-                await chat.sendMessage(`⚠️ @${user.split('@')[0]}, bitte keine doppelten Nachrichten.`, { mentions });
-            } else {
-                await msg.delete(true);
-                await chat.removeParticipants([user]);
-                await chat.sendMessage(`🚫 @${user.split('@')[0]} wurde wegen Spam entfernt.`, { mentions });
-            }
-            return;
-        }
-
-        // Beleidigungen
-        if (badWords.some(w => content.includes(w))) {
-            await msg.delete(true);
-            await chat.removeParticipants([user]);
-            await chat.sendMessage(`🚫 @${user.split('@')[0]} wurde wegen Beleidigung entfernt.`, { mentions });
-        }
+  sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
+    if (connection === "open") {
+      console.log("✅ DoubleCheckerWA ist verbunden!");
+    } else if (connection === "close") {
+      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      console.log("❌ Verbindung getrennt:", reason);
+      if (reason !== DisconnectReason.loggedOut) startBot();
     }
-});
+  });
 
-// DOPPELTE MITGLIEDER-CHECK PER !check
-client.on('message', async msg => {
-    if (msg.body.toLowerCase() === '!check' && msg.fromMe) {
-        const chats = await client.getChats();
-        const gefahrenGruppen = chats.filter(c => c.isGroup && c.name.toLowerCase().includes('gefahren'));
-        const mitgliederMap = {};
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg.message || msg.key.remoteJid !== msg.key.participant) return;
 
-        for (const gruppe of gefahrenGruppen) {
-            const participants = gruppe.participants.map(p => p.id._serialized);
-            for (const id of participants) {
-                mitgliederMap[id] = mitgliederMap[id] ? [...mitgliederMap[id], gruppe.name] : [gruppe.name];
-            }
+    const sender = msg.key.remoteJid;
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+
+    if (text.toLowerCase() === "!check") {
+      const groups = await sock.groupFetchAllParticipating();
+      const relevantGroups = Object.values(groups).filter(group => group.subject.includes("Gefahren"));
+
+      const userMap = {};
+
+      for (const group of relevantGroups) {
+        for (const participant of group.participants) {
+          userMap[participant.id] = (userMap[participant.id] || 0) + 1;
         }
+      }
 
-        const doppelte = Object.entries(mitgliederMap).filter(([_, gruppen]) => gruppen.length > 1);
+      const mehrfachUser = Object.entries(userMap)
+        .filter(([_, count]) => count > 1)
+        .map(([id]) => id)
+        .join("\n");
 
-        if (doppelte.length === 0) {
-            await msg.reply('✅ Es gibt aktuell keine Nutzer, die in mehreren "Gefahren"-Gruppen sind.');
-        } else {
-            let text = '🚨 Nutzer in mehreren "Gefahren"-Gruppen:\n\n';
-            for (const [id, gruppen] of doppelte) {
-                text += `• ${id.split('@')[0]} → ${gruppen.join(', ')}\n`;
-            }
-            await msg.reply(text);
-        }
+      await sock.sendMessage(sender, {
+        text: mehrfachUser
+          ? `👥 Diese User sind in mehreren 'Gefahren'-Gruppen:\n${mehrfachUser}`
+          : "✅ Keine doppelten User gefunden."
+      });
     }
-});
+  });
+}
 
-client.initialize();
+startBot();
