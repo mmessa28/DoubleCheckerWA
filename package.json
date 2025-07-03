@@ -1,6 +1,7 @@
 {
   "name": "doublecheckerwa",
   "version": "1.0.0",
+  "description": "WhatsApp Gruppen-Checker-Bot für 'Gefahren'-Gruppen",
   "main": "index.js",
   "type": "module",
   "scripts": {
