@@ -1,80 +1,91 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const fs = require('fs');
 
 const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: { args: ['--no-sandbox'], headless: true }
+    authStrategy: new LocalAuth()
 });
+
+let warnedUsers = {};
+const badWords = ['idiot', 'fuck', 'bastard']; // „hurensohn“ entfernt für Plattform-Kompatibilität
+const groupLinkRegex = /chat\.whatsapp\.com\/[A-Za-z0-9]+/;
 
 client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', async () => {
-    console.log('✅ DoubleCheckerWA ist aktiv und bereit!');
+client.on('ready', () => {
+    console.log('✅ DoubleCheckerWA ist aktiv!');
 });
 
-client.on('message', async msg => {
-    if (msg.body === '!check' && msg.fromMe) {
-        const chats = await client.getChats();
-        const gefahrenGruppen = chats.filter(c => c.isGroup && c.name.toLowerCase().includes('gefahren'));
+// GRUPPENMODERATION
+client.on('message_create', async msg => {
+    if (!msg.fromMe && msg.type === 'chat') {
+        const chat = await msg.getChat();
+        if (!chat.isGroup) return;
 
-        let userMap = {};
-        for (const group of gefahrenGruppen) {
-            const participants = group.participants;
-            for (const p of participants) {
-                if (!userMap[p.id._serialized]) {
-                    userMap[p.id._serialized] = { count: 1, groups: [group.name] };
-                } else {
-                    userMap[p.id._serialized].count += 1;
-                    userMap[p.id._serialized].groups.push(group.name);
-                }
-            }
+        const user = msg.author || msg.from;
+        const content = msg.body.toLowerCase();
+        const mentions = [await msg.getContact()];
+
+        // Fremdwerbung
+        if (groupLinkRegex.test(content)) {
+            await msg.delete(true);
+            await chat.removeParticipants([user]);
+            await chat.sendMessage(`🚫 @${user.split('@')[0]} wurde wegen Fremdwerbung entfernt.`, { mentions });
+            return;
         }
 
-        const doppelteUser = Object.entries(userMap)
-            .filter(([_, data]) => data.count > 1)
-            .map(([id, data]) => `👤 *${id.split('@')[0]}*: ${data.count} Gruppen\n➡️ ${data.groups.join(', ')}`);
-
-        if (doppelteUser.length === 0) {
-            await msg.reply('✅ Keine doppelten Mitglieder in den "Gefahren"-Gruppen gefunden.');
-        } else {
-            const chunks = doppelteUser.join('\n\n').match(/(.|[\r\n]){1,3000}/g); // WhatsApp Limit
-
-            for (const chunk of chunks) {
-                await msg.reply(`🚨 Doppelte Mitglieder gefunden:\n\n${chunk}`);
+        // Doppelte Nachricht
+        const messages = await chat.fetchMessages({ limit: 5 });
+        const same = messages.filter(m => m.body === msg.body && m.from === msg.from);
+        if (same.length > 1) {
+            if (!warnedUsers[user]) {
+                warnedUsers[user] = true;
+                await chat.sendMessage(`⚠️ @${user.split('@')[0]}, bitte keine doppelten Nachrichten.`, { mentions });
+            } else {
+                await msg.delete(true);
+                await chat.removeParticipants([user]);
+                await chat.sendMessage(`🚫 @${user.split('@')[0]} wurde wegen Spam entfernt.`, { mentions });
             }
+            return;
+        }
+
+        // Beleidigungen
+        if (badWords.some(w => content.includes(w))) {
+            await msg.delete(true);
+            await chat.removeParticipants([user]);
+            await chat.sendMessage(`🚫 @${user.split('@')[0]} wurde wegen Beleidigung entfernt.`, { mentions });
         }
     }
 });
 
-client.initialize();
-
+// DOPPELTE MITGLIEDER-CHECK PER !check
 client.on('message', async msg => {
-    if (msg.fromMe && msg.body === '!check') {
+    if (msg.body.toLowerCase() === '!check' && msg.fromMe) {
         const chats = await client.getChats();
         const gefahrenGruppen = chats.filter(c => c.isGroup && c.name.toLowerCase().includes('gefahren'));
+        const mitgliederMap = {};
 
-        let memberMap = {};
-
-        for (const group of gefahrenGruppen) {
-            const participants = group.participants.map(p => p.id._serialized);
+        for (const gruppe of gefahrenGruppen) {
+            const participants = gruppe.participants.map(p => p.id._serialized);
             for (const id of participants) {
-                if (!memberMap[id]) memberMap[id] = [];
-                memberMap[id].push(group.name);
+                mitgliederMap[id] = mitgliederMap[id] ? [...mitgliederMap[id], gruppe.name] : [gruppe.name];
             }
         }
 
-        let mehrfachMitglieder = Object.entries(memberMap).filter(([_, gruppen]) => gruppen.length > 1);
+        const doppelte = Object.entries(mitgliederMap).filter(([_, gruppen]) => gruppen.length > 1);
 
-        if (mehrfachMitglieder.length === 0) {
-            await msg.reply('✅ Niemand ist in mehreren "Gefahren"-Gruppen.');
+        if (doppelte.length === 0) {
+            await msg.reply('✅ Es gibt aktuell keine Nutzer, die in mehreren "Gefahren"-Gruppen sind.');
         } else {
-            let text = '⚠️ Diese Mitglieder sind in mehreren "Gefahren"-Gruppen:\n\n';
-            for (const [id, gruppen] of mehrfachMitglieder) {
-                text += `👤 ${id} → ${gruppen.join(', ')}\n`;
+            let text = '🚨 Nutzer in mehreren "Gefahren"-Gruppen:\n\n';
+            for (const [id, gruppen] of doppelte) {
+                text += `• ${id.split('@')[0]} → ${gruppen.join(', ')}\n`;
             }
             await msg.reply(text);
         }
     }
 });
+
+client.initialize();
