@@ -49,3 +49,32 @@ client.on('message', async msg => {
 });
 
 client.initialize();
+
+client.on('message', async msg => {
+    if (msg.fromMe && msg.body === '!check') {
+        const chats = await client.getChats();
+        const gefahrenGruppen = chats.filter(c => c.isGroup && c.name.toLowerCase().includes('gefahren'));
+
+        let memberMap = {};
+
+        for (const group of gefahrenGruppen) {
+            const participants = group.participants.map(p => p.id._serialized);
+            for (const id of participants) {
+                if (!memberMap[id]) memberMap[id] = [];
+                memberMap[id].push(group.name);
+            }
+        }
+
+        let mehrfachMitglieder = Object.entries(memberMap).filter(([_, gruppen]) => gruppen.length > 1);
+
+        if (mehrfachMitglieder.length === 0) {
+            await msg.reply('✅ Niemand ist in mehreren "Gefahren"-Gruppen.');
+        } else {
+            let text = '⚠️ Diese Mitglieder sind in mehreren "Gefahren"-Gruppen:\n\n';
+            for (const [id, gruppen] of mehrfachMitglieder) {
+                text += `👤 ${id} → ${gruppen.join(', ')}\n`;
+            }
+            await msg.reply(text);
+        }
+    }
+});
