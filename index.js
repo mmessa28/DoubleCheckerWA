@@ -1,22 +1,21 @@
-const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
+const { makeWASocket, useSingleFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
-const { useSingleFileAuthState } = require("@whiskeysockets/baileys");
+const fs = require("fs");
 
 async function startBot() {
-  const { state, saveState } = await useSingleFileAuthState("./auth_info_doublechecker.json");
+  const { state, saveState } = useSingleFileAuthState("./auth_info_doublechecker.json");
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
-    version,
     auth: state,
+    version,
     printQRInTerminal: true,
-    browser: ['DoubleCheckerWA', 'Chrome', '1.0'],
-    getMessage: async () => undefined, // verhindert das Puffern von Nachrichten
-    markOnlineOnConnect: false,       // verhindert Status-Nachrichten
+    browser: ["DoubleCheckerWA", "Chrome", "1.0"],
+    getMessage: async () => undefined,
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    msgRetryCounterCache: {},
     generateHighQualityLinkPreview: false,
-    syncFullHistory: false,           // deaktiviert Historie
-    msgRetryCounterCache: {},         // RAM-neutral
-    patchMessageBeforeSending: (msg) => msg,
   });
 
   sock.ev.on("creds.update", saveState);
@@ -43,7 +42,6 @@ async function startBot() {
       const relevantGroups = Object.values(groups).filter(group => group.subject.includes("Gefahren"));
 
       const userMap = {};
-
       for (const group of relevantGroups) {
         for (const participant of group.participants) {
           userMap[participant.id] = (userMap[participant.id] || 0) + 1;
@@ -62,6 +60,9 @@ async function startBot() {
       });
     }
   });
+
+  // Damit Render den Bot nicht killt
+  setInterval(() => console.log("✅ DoubleCheckerWA läuft noch..."), 10000);
 }
 
 startBot();
