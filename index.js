@@ -30,7 +30,6 @@ const startSock = async () => {
     if (qr) {
       qrcode.generate(qr, { small: true });
     }
-
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode || 0;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
@@ -61,16 +60,18 @@ const startSock = async () => {
           const metadata = await sock.groupMetadata(group.id);
           metadata.participants.forEach(p => {
             const id = p.id;
-            userMap.set(id, (userMap.get(id) || 0) + 1);
+            if (!userMap.has(id)) userMap.set(id, []);
+            userMap.get(id).push(metadata.subject);
           });
         }
 
         const dupes = [...userMap.entries()]
-          .filter(([_, count]) => count > 1)
-          .map(([id]) => id);
+          .filter(([_, groups]) => groups.length > 1);
 
         const resultText = dupes.length
-          ? `👥 Diese Nummern sind in mehreren 'Gefahren'-Gruppen:\n\n${dupes.join('\n')}`
+          ? dupes.map(([id, groups]) =>
+              `👤 ${id}\n  in Gruppen:\n    - ${groups.join('\n    - ')}`
+            ).join('\n\n')
           : '✅ Keine Überschneidungen gefunden.';
 
         await sock.sendMessage(from, { text: resultText });
