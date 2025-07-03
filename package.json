@@ -1,12 +1,15 @@
+/*
 {
-  "name": "DoubleCheckerWA",
+  "name": "doublecheckerwa",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "whatsapp-web.js": "^1.21.1",
-    "qrcode-terminal": "^0.12.0"
+    "@hapi/boom": "^11.1.4",
+    "@whiskeysockets/baileys": "^6.7.0"
   }
 }
+*/
