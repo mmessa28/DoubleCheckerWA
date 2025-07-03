@@ -1,6 +1,9 @@
-import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } from '@whiskeysockets/baileys';
+import makeWASocket, {
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    DisconnectReason
+} from '@whiskeysockets/baileys';
 import Pino from 'pino';
-import { Boom } from '@hapi/boom';
 import fs from 'fs';
 
 const logger = Pino({ level: 'error' });
@@ -28,8 +31,9 @@ const startSock = async () => {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Verbindung getrennt:', (lastDisconnect?.error as Boom)?.output?.statusCode);
+            const statusCode = lastDisconnect?.error?.output?.statusCode || 0;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log('Verbindung getrennt:', statusCode);
             if (shouldReconnect) {
                 startSock();
             }
@@ -48,7 +52,9 @@ const startSock = async () => {
         if (isPrivate && msg.message?.conversation === '!check') {
             try {
                 const allGroups = await sock.groupFetchAllParticipating();
-                const relevantGroups = Object.values(allGroups).filter(g => g.subject.toLowerCase().includes('gefahren'));
+                const relevantGroups = Object.values(allGroups).filter(g =>
+                    g.subject.toLowerCase().includes('gefahren')
+                );
 
                 const userMap = new Map();
 
@@ -60,10 +66,14 @@ const startSock = async () => {
                     });
                 }
 
-                const dupes = [...userMap.entries()].filter(([_, count]) => count > 1).map(([id]) => id);
-                const resultText = dupes.length ? `👥 Diese Nummern sind in mehreren 'Gefahren'-Gruppen:
+                const dupes = [...userMap.entries()]
+                    .filter(([_, count]) => count > 1)
+                    .map(([id]) => id);
 
-${dupes.join('\n')}` : '✅ Keine Überschneidungen gefunden.';
+                const resultText = dupes.length
+                    ? `👥 Diese Nummern sind in mehreren 'Gefahren'-Gruppen:\n\n${dupes.join('\n')}`
+                    : '✅ Keine Überschneidungen gefunden.';
+
                 await sock.sendMessage(from, { text: resultText });
 
             } catch (err) {
