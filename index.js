@@ -1,40 +1,36 @@
 import baileys, {
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    DisconnectReason
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  DisconnectReason
 } from '@whiskeysockets/baileys';
 import Pino from 'pino';
-import fs from 'fs';
 
 const { makeWASocket } = baileys;
-
 const logger = Pino({ level: 'error' });
 
 const startSock = async () => {
-    // ... dein Code bleibt gleich ...
-};
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+  const { version } = await fetchLatestBaileysVersion();
+
+  const sock = makeWASocket({
     version,
     auth: state,
-    logger,
     printQRInTerminal: true,
+    logger,
     syncFullHistory: false,
     downloadHistory: false,
     emitOwnEvents: false,
     generateHighQualityLinkPreview: false,
-    getMessage: async () => ({
-      conversation: 'No history'
-    })
+    getMessage: async () => ({ conversation: 'No history' })
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error instanceof Boom)
-        ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
-        : true;
-      console.log('❌ Verbindung getrennt:', lastDisconnect?.error?.output?.statusCode);
+      const statusCode = lastDisconnect?.error?.output?.statusCode || 0;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log('Verbindung getrennt:', statusCode);
       if (shouldReconnect) startSock();
     } else if (connection === 'open') {
       console.log('✅ DoubleCheckerWA ist verbunden!');
@@ -51,7 +47,9 @@ const startSock = async () => {
     if (isPrivate && msg.message?.conversation === '!check') {
       try {
         const allGroups = await sock.groupFetchAllParticipating();
-        const relevantGroups = Object.values(allGroups).filter(g => g.subject.toLowerCase().includes('gefahren'));
+        const relevantGroups = Object.values(allGroups).filter(g =>
+          g.subject.toLowerCase().includes('gefahren')
+        );
 
         const userMap = new Map();
         for (const group of relevantGroups) {
@@ -71,6 +69,7 @@ const startSock = async () => {
           : '✅ Keine Überschneidungen gefunden.';
 
         await sock.sendMessage(from, { text: resultText });
+
       } catch (err) {
         console.error('Fehler beim Prüfen:', err);
         await sock.sendMessage(from, { text: '❌ Fehler beim Überprüfen der Gruppen.' });
