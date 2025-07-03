@@ -1,18 +1,18 @@
-import makeWASocket, {
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  DisconnectReason
+import baileys, {
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    DisconnectReason
 } from '@whiskeysockets/baileys';
 import Pino from 'pino';
-import { Boom } from '@hapi/boom';
+import fs from 'fs';
+
+const { makeWASocket } = baileys;
 
 const logger = Pino({ level: 'error' });
 
 const startSock = async () => {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
+    // ... dein Code bleibt gleich ...
+};
     version,
     auth: state,
     logger,
