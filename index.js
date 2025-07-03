@@ -1,9 +1,14 @@
-const { makeWASocket, useSingleFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const {
+  makeWASocket,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  DisconnectReason
+} = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
 const fs = require("fs");
 
 async function startBot() {
-  const { state, saveState } = useSingleFileAuthState("./auth_info_doublechecker.json");
+  const { state, saveCreds } = await useMultiFileAuthState("auth_info_doublechecker");
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
@@ -18,7 +23,7 @@ async function startBot() {
     generateHighQualityLinkPreview: false,
   });
 
-  sock.ev.on("creds.update", saveState);
+  sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
     if (connection === "open") {
@@ -61,7 +66,6 @@ async function startBot() {
     }
   });
 
-  // Damit Render den Bot nicht killt
   setInterval(() => console.log("✅ DoubleCheckerWA läuft noch..."), 10000);
 }
 
