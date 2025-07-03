@@ -1,80 +1,77 @@
-const {
-  makeWASocket,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  DisconnectReason,
-} = require("@whiskeysockets/baileys");
-const { Boom } = require("@hapi/boom");
-const qrcode = require("qrcode-terminal");
-const fs = require("fs");
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } from '@whiskeysockets/baileys';
+import Pino from 'pino';
+import { Boom } from '@hapi/boom';
+import fs from 'fs';
 
-async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth_info_doublechecker");
-  const { version } = await fetchLatestBaileysVersion();
+const logger = Pino({ level: 'error' });
 
-  const sock = makeWASocket({
-    auth: state,
-    version,
-    browser: ["DoubleCheckerWA", "Chrome", "1.0"],
-    getMessage: async () => undefined,
-    markOnlineOnConnect: false,
-    syncFullHistory: false,
-    msgRetryCounterCache: {},
-    generateHighQualityLinkPreview: false,
-  });
+const startSock = async () => {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { version } = await fetchLatestBaileysVersion();
 
-  sock.ev.on("creds.update", saveCreds);
+    const sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: true,
+        logger,
+        syncFullHistory: false,
+        downloadHistory: false,
+        emitOwnEvents: false,
+        generateHighQualityLinkPreview: false,
+        getMessage: async () => ({
+            conversation: 'No history'
+        })
+    });
 
-  // QR-Code im Terminal anzeigen
-  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      qrcode.generate(qr, { small: true });
-      console.log("📱 Scan den QR-Code mit WhatsApp!");
-    }
+    sock.ev.on('creds.update', saveCreds);
 
-    if (connection === "open") {
-      console.log("✅ DoubleCheckerWA ist verbunden!");
-    } else if (connection === "close") {
-      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      console.log("❌ Verbindung getrennt:", reason);
-      if (reason !== DisconnectReason.loggedOut) startBot();
-    }
-  });
-
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg.message || msg.key.remoteJid !== msg.key.participant) return;
-
-    const sender = msg.key.remoteJid;
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
-
-    if (text.toLowerCase() === "!check") {
-      const groups = await sock.groupFetchAllParticipating();
-      const relevantGroups = Object.values(groups).filter(group =>
-        group.subject.includes("Gefahren")
-      );
-
-      const userMap = {};
-      for (const group of relevantGroups) {
-        for (const participant of group.participants) {
-          userMap[participant.id] = (userMap[participant.id] || 0) + 1;
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'close') {
+            const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Verbindung getrennt:', (lastDisconnect?.error as Boom)?.output?.statusCode);
+            if (shouldReconnect) {
+                startSock();
+            }
+        } else if (connection === 'open') {
+            console.log('✅ DoubleCheckerWA ist verbunden!');
         }
-      }
+    });
 
-      const mehrfachUser = Object.entries(userMap)
-        .filter(([_, count]) => count > 1)
-        .map(([id]) => id)
-        .join("\n");
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        const msg = messages[0];
+        if (!msg.message || !msg.key.remoteJid) return;
+        const from = msg.key.remoteJid;
+        const isPrivate = from.endsWith('@s.whatsapp.net');
 
-      await sock.sendMessage(sender, {
-        text: mehrfachUser
-          ? `👥 Diese User sind in mehreren 'Gefahren'-Gruppen:\n${mehrfachUser}`
-          : "✅ Keine doppelten User gefunden.",
-      });
-    }
-  });
+        if (isPrivate && msg.message?.conversation === '!check') {
+            try {
+                const allGroups = await sock.groupFetchAllParticipating();
+                const relevantGroups = Object.values(allGroups).filter(g => g.subject.toLowerCase().includes('gefahren'));
 
-  setInterval(() => console.log("✅ DoubleCheckerWA läuft noch..."), 10000);
-}
+                const userMap = new Map();
 
-startBot();
+                for (const group of relevantGroups) {
+                    const metadata = await sock.groupMetadata(group.id);
+                    metadata.participants.forEach(p => {
+                        const id = p.id;
+                        userMap.set(id, (userMap.get(id) || 0) + 1);
+                    });
+                }
+
+                const dupes = [...userMap.entries()].filter(([_, count]) => count > 1).map(([id]) => id);
+                const resultText = dupes.length ? `👥 Diese Nummern sind in mehreren 'Gefahren'-Gruppen:
+
+${dupes.join('\n')}` : '✅ Keine Überschneidungen gefunden.';
+                await sock.sendMessage(from, { text: resultText });
+
+            } catch (err) {
+                console.error('Fehler beim Prüfen:', err);
+                await sock.sendMessage(from, { text: '❌ Fehler beim Überprüfen der Gruppen.' });
+            }
+        }
+    });
+};
+
+startSock();
