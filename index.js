@@ -2,9 +2,10 @@ const {
   makeWASocket,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  DisconnectReason
+  DisconnectReason,
 } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
+const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 
 async function startBot() {
@@ -14,7 +15,6 @@ async function startBot() {
   const sock = makeWASocket({
     auth: state,
     version,
-    printQRInTerminal: true,
     browser: ["DoubleCheckerWA", "Chrome", "1.0"],
     getMessage: async () => undefined,
     markOnlineOnConnect: false,
@@ -25,7 +25,13 @@ async function startBot() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
+  // QR-Code im Terminal anzeigen
+  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      qrcode.generate(qr, { small: true });
+      console.log("📱 Scan den QR-Code mit WhatsApp!");
+    }
+
     if (connection === "open") {
       console.log("✅ DoubleCheckerWA ist verbunden!");
     } else if (connection === "close") {
@@ -44,7 +50,9 @@ async function startBot() {
 
     if (text.toLowerCase() === "!check") {
       const groups = await sock.groupFetchAllParticipating();
-      const relevantGroups = Object.values(groups).filter(group => group.subject.includes("Gefahren"));
+      const relevantGroups = Object.values(groups).filter(group =>
+        group.subject.includes("Gefahren")
+      );
 
       const userMap = {};
       for (const group of relevantGroups) {
@@ -61,7 +69,7 @@ async function startBot() {
       await sock.sendMessage(sender, {
         text: mehrfachUser
           ? `👥 Diese User sind in mehreren 'Gefahren'-Gruppen:\n${mehrfachUser}`
-          : "✅ Keine doppelten User gefunden."
+          : "✅ Keine doppelten User gefunden.",
       });
     }
   });
